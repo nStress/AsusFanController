@@ -1,6 +1,6 @@
 ## Download
 
-You can download the latest compiled version of the application from the [Releases page](https://github.com/nStress/AsusFanController/blob/main/release/AsusFanController.exe).
+You can download the latest compiled version of the application from the [Releases page](https://github.com/nStress/AsusFanController/releases).
 
 
 
