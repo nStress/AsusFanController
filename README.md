@@ -1,3 +1,9 @@
+## Download
+
+You can download the latest compiled version of the application from the [Releases page](https://github.com/nStress/AsusFanController/releases).
+
+
+
 # Fan Control and Monitoring Application
 
 This Python application allows you to control and monitor the fans and temperature of your laptop or PC, specifically designed to work with ASUS devices using the `AsusWinIO64.dll` library. The application provides real-time monitoring of CPU and GPU temperatures, fan speeds, and allows you to adjust fan speeds based on temperature. Additionally, the app offers a fan testing feature to evaluate the performance and synchronization of the fans.
@@ -23,16 +29,16 @@ To use this application, you need the following dependencies:
 
 ### Install dependencies:
 
-'''
+```
 pip install cffi psutil GPUtil tkinter
-'''
+```
 
 Ensure you have the **`AsusWinIO64.dll`** file in the same directory as this script or specify the path in the code.
 
 ## Usage
 
 1. **Running the Application**:
-    - Simply run the `fan_control.py` script using Python.
+    - Simply run the `AsusFanController.py` script using Python.
     - The application window will appear with the current temperatures for CPU and GPU and the fan speeds.
     - You can adjust the fan speeds using the slider or let the app adjust them automatically based on temperature.
 
@@ -93,6 +99,29 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Contributing
 
 Feel free to fork the repository and create pull requests for bug fixes or new features. Please make sure to follow the coding standards and write tests for any new functionality.
-'''
+```
 
 
+
+## How to Create the `.exe` File from the Python Script
+
+To create the `.exe` file from the Python script `AsusFanController.py`, follow these steps:
+
+### 1. Install PyInstaller
+If you don't have `PyInstaller` installed, you can install it using pip:
+
+```bash
+pip install pyinstaller
+```
+
+### 2. Create the `.exe` File
+In the directory where the `AsusFanController.py` script and the `icon.ico` file are located, run the following command in the terminal:
+
+```bash
+pyinstaller --onefile --icon=icon.ico AsusFanController.py
+```
+
+This will generate a single `.exe` file in the `dist` folder.
+
+### 3. Locate the `.exe` File
+The compiled file will be located in the `dist` folder and will be named `AsusFanController.exe`.
