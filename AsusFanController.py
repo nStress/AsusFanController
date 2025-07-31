@@ -9,6 +9,43 @@ import GPUtil
 import traceback
 import math
 
+# --- Constants ---
+
+# Fan Speed & Temperature
+MAX_FAN_SPEED = 5000
+TARGET_TEMP = 60
+MIN_FAN_SPEED_PERCENTAGE = 50
+MAX_FAN_SPEED_PERCENTAGE = 100
+TEMP_CHANGE_THRESHOLD = 2
+MONITORING_INTERVAL = 1  # seconds
+
+# Fan Health Test
+POOR_FAN_RPM = 2000
+GOOD_FAN_RPM = 3500
+EXCELLENT_FAN_RPM = 4500
+SYNC_RPM_THRESHOLD = 500
+TEST_RAMP_UP_STEP = 5
+TEST_RAMP_UP_DELAY = 1  # seconds
+TEST_READING_COUNT = 20
+TEST_READING_DELAY = 1  # seconds
+
+# GUI Dimensions & Colors
+WINDOW_WIDTH = 600
+WINDOW_HEIGHT = 450
+BG_COLOR = "#1e1e2f"
+FRAME_COLOR = "#2e3440"
+OUTLINE_COLOR = "#4c566a"
+TEXT_COLOR = "white"
+ACCENT_COLOR = "#88c0d0"
+SLIDER_COLOR = "#2980b9"
+BUTTON_COLOR = "#5865F2"
+BUTTON_ACTIVE_COLOR = "#4752C4"
+
+SLIDER_START_X = 100
+SLIDER_END_X = 500
+SLIDER_Y = 320
+SLIDER_MARKER_RADIUS = 10
+
 ffi = cffi.FFI()
 
 ffi.cdef("""
@@ -76,8 +113,6 @@ log_cpu_info = False  # Log option for CPU/GPU info
 fan_speed_adjusted = False
 
 def monitor_fans(asus_control, cpu_temp_text, gpu_temp_text, fan1_text, fan2_text):
-    max_fan_speed = 5000 
-
     try:
         while not stop_monitoring_event.is_set():
             try:
@@ -96,8 +131,8 @@ def monitor_fans(asus_control, cpu_temp_text, gpu_temp_text, fan1_text, fan2_tex
                 if log_cpu_info:  # Log CPU/GPU data if the option is enabled
                     print(f"CPU Temp: {cpu_temp}°C | GPU Temp: {gpu_temp}°C | CPU RPM: {fan1_speed} RPM | GPU RPM: {fan2_speed} RPM")
 
-                fan1_percentage = (fan1_speed / max_fan_speed) * 100 if fan1_speed else 0
-                fan2_percentage = (fan2_speed / max_fan_speed) * 100 if fan2_speed else 0
+                fan1_percentage = (fan1_speed / MAX_FAN_SPEED) * 100 if fan1_speed else 0
+                fan2_percentage = (fan2_speed / MAX_FAN_SPEED) * 100 if fan2_speed else 0
 
                 average_percentage = (fan1_percentage + fan2_percentage) / 2
 
@@ -105,13 +140,15 @@ def monitor_fans(asus_control, cpu_temp_text, gpu_temp_text, fan1_text, fan2_tex
                 displayed_percentage = min(average_percentage, 100)
 
                 root.after(0, lambda: canvas.itemconfig(slider_value_text, text=f"Fan Speed: {int(displayed_percentage)}%"))
-                root.after(0, lambda: canvas.coords(slider_marker, slider_start_x + (displayed_percentage * (slider_end_x - slider_start_x) // 100) - 10, 310, slider_start_x + (displayed_percentage * (slider_end_x - slider_start_x) // 100) + 10, 330))
+                slider_x_pos = SLIDER_START_X + (displayed_percentage * (SLIDER_END_X - SLIDER_START_X) // 100)
+                root.after(0, lambda: canvas.coords(slider_marker, slider_x_pos - SLIDER_MARKER_RADIUS, SLIDER_Y - SLIDER_MARKER_RADIUS, slider_x_pos + SLIDER_MARKER_RADIUS, SLIDER_Y + SLIDER_MARKER_RADIUS))
+
 
             except Exception as e:
                 log_error(e)
                 messagebox.showerror("Error", f"An error occurred: {e}")
 
-            time.sleep(1)
+            time.sleep(MONITORING_INTERVAL)
     except Exception as e:
         log_error(e)
         messagebox.showerror("Error", f"An error occurred in the monitoring thread: {e}")
@@ -122,39 +159,30 @@ def stop_monitoring():
     asus_control.reset_fans()
     root.quit()
 
-def update_fan_speed(value):
-    return value
-
-
-
-
 last_cpu_temp = None  # Initialize last_cpu_temp before the function is called
 
 def adjust_fan_speed_by_temp():
     global fan_speed_adjusted, last_cpu_temp
-    target_temp = 60  # Desired target temperature
     cpu_temp = asus_control.get_cpu_temperature()
     gpu_temp = asus_control.get_gpu_temperature()
 
-    temp_diff = max(cpu_temp - target_temp, gpu_temp - target_temp)
+    temp_diff = max(cpu_temp - TARGET_TEMP, gpu_temp - TARGET_TEMP if gpu_temp else 0)
 
     if temp_diff > 0:
         gradual_factor = math.exp(-temp_diff / 10.0)  # Gradual decay factor
-        target_speed = 50 + (100 - 50) * gradual_factor
-        target_speed = max(50, min(target_speed, 100))  # Limit to 50-100%
+        target_speed = MIN_FAN_SPEED_PERCENTAGE + (MAX_FAN_SPEED_PERCENTAGE - MIN_FAN_SPEED_PERCENTAGE) * gradual_factor
+        target_speed = max(MIN_FAN_SPEED_PERCENTAGE, min(target_speed, MAX_FAN_SPEED_PERCENTAGE))
 
         asus_control.set_all_fans_speed(int(target_speed))
     else:
-        asus_control.set_all_fans_speed(50)
+        asus_control.set_all_fans_speed(MIN_FAN_SPEED_PERCENTAGE)
 
     if last_cpu_temp is not None:
+        time_step = MONITORING_INTERVAL
         temp_rate_of_change = (cpu_temp - last_cpu_temp) / time_step
-        if abs(temp_rate_of_change) > 2:  # If temperature changes too rapidly
+        if abs(temp_rate_of_change) > TEMP_CHANGE_THRESHOLD:
             time.sleep(1)  # Delay to smooth adjustments
-        else:
-            last_cpu_temp = cpu_temp  # Update last_cpu_temp with current cpu_temp
-    else:
-        last_cpu_temp = cpu_temp  # Initialize on first run
+    last_cpu_temp = cpu_temp  # Update last_cpu_temp with current cpu_temp
 
     fan_speed_adjusted = True
     messagebox.showinfo("Fan Speed Adjusted", "Fan speeds have been adjusted gradually based on temperature.")
@@ -172,11 +200,11 @@ def update_progress_bar(value, max_value, progress_bar, progress_label):
 
 def calculate_fan_health(speed, fan_name):
     """Evaluate the health of a fan based on speed."""
-    if speed < 2000:
+    if speed < POOR_FAN_RPM:
         return f"{fan_name}: Poor (RPM: {speed})"
-    elif speed < 3500:
+    elif speed < GOOD_FAN_RPM:
         return f"{fan_name}: Good (RPM: {speed})"
-    elif speed < 4500:
+    elif speed < EXCELLENT_FAN_RPM:
         return f"{fan_name}: Very Good (RPM: {speed})"
     else:
         return f"{fan_name}: Excellent (RPM: {speed})"
@@ -189,17 +217,17 @@ def run_test(progress_bar, progress_label):
 
 
     asus_control.set_all_fans_speed(0)
-    time.sleep(2)
+    time.sleep(2)  # Wait for fans to spin down
 
 
-    for i in range(1, 101, 5):
+    for i in range(1, 101, TEST_RAMP_UP_STEP):
         asus_control.set_all_fans_speed(i)
-        time.sleep(1)
-        update_progress_bar(i, 120, progress_bar, progress_label)
+        time.sleep(TEST_RAMP_UP_DELAY)
+        update_progress_bar(i, 100 + TEST_READING_COUNT, progress_bar, progress_label)
 
 
-    for i in range(20):
-        time.sleep(1)
+    for i in range(TEST_READING_COUNT):
+        time.sleep(TEST_READING_DELAY)
         fan1_speed = asus_control.get_fan_speed(0)
         fan2_speed = asus_control.get_fan_speed(1) if asus_control.get_fan_count() > 1 else 0
 
@@ -209,7 +237,7 @@ def run_test(progress_bar, progress_label):
         max_fan2_speed = max(max_fan2_speed, fan2_speed)
         count += 1
 
-        update_progress_bar(i + 101, 120, progress_bar, progress_label)
+        update_progress_bar(100 + i + 1, 100 + TEST_READING_COUNT, progress_bar, progress_label)
 
 
     avg_fan1_speed = total_fan1_speed / count
@@ -220,10 +248,10 @@ def run_test(progress_bar, progress_label):
     fan2_health_status = calculate_fan_health(avg_fan2_speed, "FAN GPU")
 
 
-    sync_status = "Good Sync" if abs(avg_fan1_speed - avg_fan2_speed) < 500 else "Bad Sync"
+    sync_status = "Good Sync" if abs(avg_fan1_speed - avg_fan2_speed) < SYNC_RPM_THRESHOLD else "Bad Sync"
 
   
-    if avg_fan1_speed > 4000 and avg_fan2_speed > 4000 and sync_status == "Good Sync":
+    if avg_fan1_speed > GOOD_FAN_RPM and avg_fan2_speed > GOOD_FAN_RPM and sync_status == "Good Sync":
         verdict = "Fans are running optimally and synchronized. \nVerdict: Excellent."
     else:
         verdict = "Fans are not running optimally or are unsynchronized. \nVerdict: Needs attention."
@@ -323,9 +351,9 @@ def test_fan():
 
 root = tk.Tk()
 root.title("Fan Control and Monitoring")
-root.geometry("600x450")
+root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
 root.attributes('-alpha', 0.97)
-root.configure(bg="#1e1e2f")
+root.configure(bg=BG_COLOR)
 root.iconbitmap("icon.ico")
 root.resizable(False, False)
 menu_bar = tk.Menu(root)
@@ -339,45 +367,43 @@ menu_bar.add_cascade(label="Options", menu=options_menu)
 # options_menu.add_command(label="Synchronize Fans", command=synchronize_fans) -- not working correctly
 root.config(menu=menu_bar)
 
-canvas = tk.Canvas(root, bg="#1e1e2f", highlightthickness=0, bd=0)
+canvas = tk.Canvas(root, bg=BG_COLOR, highlightthickness=0, bd=0)
 canvas.pack(fill=tk.BOTH, expand=True)
 
 # Create CPU, GPU, Fan speed labels
-cpu_frame = canvas.create_rectangle(50, 50, 550, 100, fill="#2e3440", outline="#4c566a", width=2)
-cpu_text = canvas.create_text(75, 75, text="CPU Temperature:", anchor="w", font=("Segoe UI", 14), fill="white")
-cpu_temp_text = canvas.create_text(525, 75, text="0 °C", anchor="e", font=("Segoe UI", 14), fill="#88c0d0")
+cpu_frame = canvas.create_rectangle(50, 50, 550, 100, fill=FRAME_COLOR, outline=OUTLINE_COLOR, width=2)
+cpu_text = canvas.create_text(75, 75, text="CPU Temperature:", anchor="w", font=("Segoe UI", 14), fill=TEXT_COLOR)
+cpu_temp_text = canvas.create_text(525, 75, text="0 °C", anchor="e", font=("Segoe UI", 14), fill=ACCENT_COLOR)
 
-gpu_frame = canvas.create_rectangle(50, 110, 550, 160, fill="#2e3440", outline="#4c566a", width=2)
-gpu_text = canvas.create_text(75, 135, text="GPU Temperature:", anchor="w", font=("Segoe UI", 14), fill="white")
-gpu_temp_text = canvas.create_text(525, 135, text="0 °C", anchor="e", font=("Segoe UI", 14), fill="#88c0d0")
+gpu_frame = canvas.create_rectangle(50, 110, 550, 160, fill=FRAME_COLOR, outline=OUTLINE_COLOR, width=2)
+gpu_text = canvas.create_text(75, 135, text="GPU Temperature:", anchor="w", font=("Segoe UI", 14), fill=TEXT_COLOR)
+gpu_temp_text = canvas.create_text(525, 135, text="0 °C", anchor="e", font=("Segoe UI", 14), fill=ACCENT_COLOR)
 
-fan1_frame = canvas.create_rectangle(50, 170, 550, 220, fill="#2e3440", outline="#4c566a", width=2)
-fan1_text_label = canvas.create_text(75, 195, text="FAN CPU Speed:", anchor="w", font=("Segoe UI", 14), fill="white")
-fan1_text = canvas.create_text(525, 195, text="0 RPM", anchor="e", font=("Segoe UI", 14), fill="#88c0d0")
+fan1_frame = canvas.create_rectangle(50, 170, 550, 220, fill=FRAME_COLOR, outline=OUTLINE_COLOR, width=2)
+fan1_text_label = canvas.create_text(75, 195, text="FAN CPU Speed:", anchor="w", font=("Segoe UI", 14), fill=TEXT_COLOR)
+fan1_text = canvas.create_text(525, 195, text="0 RPM", anchor="e", font=("Segoe UI", 14), fill=ACCENT_COLOR)
 
-fan2_frame = canvas.create_rectangle(50, 230, 550, 280, fill="#2e3440", outline="#4c566a", width=2)
-fan2_text_label = canvas.create_text(75, 255, text="FAN GPU Speed:", anchor="w", font=("Segoe UI", 14), fill="white")
-fan2_text = canvas.create_text(525, 255, text="0 RPM", anchor="e", font=("Segoe UI", 14), fill="#88c0d0")
+fan2_frame = canvas.create_rectangle(50, 230, 550, 280, fill=FRAME_COLOR, outline=OUTLINE_COLOR, width=2)
+fan2_text_label = canvas.create_text(75, 255, text="FAN GPU Speed:", anchor="w", font=("Segoe UI", 14), fill=TEXT_COLOR)
+fan2_text = canvas.create_text(525, 255, text="0 RPM", anchor="e", font=("Segoe UI", 14), fill=ACCENT_COLOR)
 
-slider_start_x = 100
-slider_end_x = 500
 slider_position = 100
-slider_line = canvas.create_line(slider_start_x, 320, slider_end_x, 320, width=5, fill="#2980b9")
-slider_marker = canvas.create_oval(slider_start_x - 10, 310, slider_start_x + 10, 330, fill="#2980b9", outline="#88c0d0")
-slider_value_text = canvas.create_text(300, 340, text=f"Fan Speed: 0%", font=("Segoe UI", 14), fill="white")
+slider_line = canvas.create_line(SLIDER_START_X, SLIDER_Y, SLIDER_END_X, SLIDER_Y, width=5, fill=SLIDER_COLOR)
+slider_marker = canvas.create_oval(SLIDER_START_X - SLIDER_MARKER_RADIUS, SLIDER_Y - SLIDER_MARKER_RADIUS, SLIDER_START_X + SLIDER_MARKER_RADIUS, SLIDER_Y + SLIDER_MARKER_RADIUS, fill=SLIDER_COLOR, outline=ACCENT_COLOR)
+slider_value_text = canvas.create_text(300, 340, text=f"Fan Speed: 0%", font=("Segoe UI", 14), fill=TEXT_COLOR)
 
-canvas.itemconfig(slider_marker, state="hidden") 
-canvas.itemconfig(slider_value_text, state="hidden")  
-canvas.itemconfig(slider_line, state="hidden") 
+canvas.itemconfig(slider_marker, state="hidden")
+canvas.itemconfig(slider_value_text, state="hidden")
+canvas.itemconfig(slider_line, state="hidden")
 
-slider_moved = False  
+slider_moved = False
 
 def move_slider(event):
     global slider_position, slider_moved
-    if slider_start_x <= event.x <= slider_end_x:
-        slider_position = min(100, (event.x - slider_start_x) * 100 // (slider_end_x - slider_start_x))
+    if SLIDER_START_X <= event.x <= SLIDER_END_X:
+        slider_position = min(100, (event.x - SLIDER_START_X) * 100 // (SLIDER_END_X - SLIDER_START_X))
         
-        canvas.coords(slider_marker, event.x - 10, 310, event.x + 10, 330)
+        canvas.coords(slider_marker, event.x - SLIDER_MARKER_RADIUS, SLIDER_Y - SLIDER_MARKER_RADIUS, event.x + SLIDER_MARKER_RADIUS, SLIDER_Y + SLIDER_MARKER_RADIUS)
         canvas.itemconfig(slider_value_text, text=f"Fan Speed: {slider_position}%")
         if not slider_moved:
             slider_moved = True
@@ -385,18 +411,18 @@ def move_slider(event):
 
 def release_slider(event):
     global slider_position, slider_moved
-    if slider_moved:  
+    if slider_moved:
         asus_control.set_all_fans_speed(slider_position)
-    slider_moved = False  
+    slider_moved = False
 
 canvas.bind("<B1-Motion>", move_slider)
 canvas.bind("<ButtonRelease-1>", release_slider)
 
 def on_enter(event):
-    stop_button.config(bg="#4752C4")
+    stop_button.config(bg=BUTTON_ACTIVE_COLOR)
 
 def on_leave(event):
-    stop_button.config(bg="#5865F2")
+    stop_button.config(bg=BUTTON_COLOR)
 
 def start_fan_control():
     start_button.pack_forget()  
@@ -419,9 +445,9 @@ start_button = tk.Button(
     text="Start Fan",
     command=start_fan_control,
     font=("Segoe UI", 12, "bold"),
-    fg="white",
-    bg="#5865F2",
-    activebackground="#4752C4",
+    fg=TEXT_COLOR,
+    bg=BUTTON_COLOR,
+    activebackground=BUTTON_ACTIVE_COLOR,
     relief="flat",
     padx=20,
     pady=10,
@@ -434,9 +460,9 @@ stop_button = tk.Button(
     text="Close Fan",
     command=stop_fan_control,
     font=("Segoe UI", 12, "bold"),
-    fg="white",
-    bg="#5865F2",
-    activebackground="#4752C4",
+    fg=TEXT_COLOR,
+    bg=BUTTON_COLOR,
+    activebackground=BUTTON_ACTIVE_COLOR,
     relief="flat",
     padx=20,
     pady=10,
